@@ -4,9 +4,7 @@
 
 #include <cassert>
 #include <cstring>
-#include <exception>
-#include <stdexcept>
-#include <tuple>
+#include <utility>
 
 namespace async
 {
@@ -21,12 +19,8 @@ namespace async
         {
             switch (other.m_storageType)
             {
-            case result_union_type::exception:
-                new (std::addressof(m_storage.exception)) std::exception_ptr{ std::move(other.m_storage.exception) };
-                other.m_storage.exception = {};
-                break;
             case result_union_type::value:
-                new (std::addressof(m_storage.value)) possible_reference{ std::move(other.m_storage.value) };
+                new (m_storage) possible_reference{ std::move(other.m_storage) };
                 break;
             default:
                 break;
@@ -40,11 +34,8 @@ namespace async
         {
             switch (m_storageType)
             {
-            case result_union_type::exception:
-                m_storage.exception.~exception_ptr();
-                break;
             case result_union_type::value:
-                m_storage.value.~possible_reference();
+                m_storage.~possible_reference();
                 break;
             }
         }
@@ -56,30 +47,19 @@ namespace async
         {
             switch (m_storageType)
             {
-            case result_union_type::exception:
-                std::rethrow_exception(m_storage.exception);
-                break;
             case result_union_type::value:
-                return std::forward<T>(m_storage.value.value);
+                return std::forward<T>(m_storage.value);
             case result_union_type::unset:
-                assert(false);
-                throw std::runtime_error{ "Awaitable result is not yet available." };
+                assert(false && "Awaitable result is not yet available.");
             default:
-                assert(false);
-                throw std::runtime_error{ "Invalid awaitable result state." };
+                assert(false && "Invalid awaitable result state.");
             }
         }
 
         void set_value(T value) noexcept
         {
-            new (std::addressof(m_storage.value)) possible_reference{ std::forward<T>(value) };
+            new (std::addressof(m_storage)) possible_reference{ std::forward<T>(value) };
             m_storageType = result_union_type::value;
-        }
-
-        void set_exception(const std::exception_ptr& exception) noexcept
-        {
-            new (std::addressof(m_storage.exception)) std::exception_ptr{ exception };
-            m_storageType = result_union_type::exception;
         }
 
     private:
@@ -90,39 +70,20 @@ namespace async
             T value;
         };
 
-        union result_union
-        {
-            constexpr result_union() noexcept { std::ignore = std::memset(this, 0, sizeof(*this)); }
-
-            result_union(const result_union&) = delete;
-            result_union(result_union&&) noexcept = delete;
-
-            ~result_union() noexcept {}
-
-            result_union& operator=(const result_union&) = delete;
-            result_union& operator=(result_union&&) noexcept = delete;
-
-            possible_reference value;
-            std::exception_ptr exception;
-        };
-
         enum class result_union_type
         {
             unset,
             value,
-            exception
         };
 
         result_union_type m_storageType;
-        result_union m_storage;
+        possible_reference m_storage;
     };
 
     template <>
     struct awaitable_result<void> final
     {
-        awaitable_result() noexcept : m_exception{} {}
-
-        explicit awaitable_result(const std::exception_ptr& exception) noexcept : m_exception{ exception } {}
+        awaitable_result() noexcept {}
 
         awaitable_result(const awaitable_result&) = delete;
         awaitable_result(awaitable_result&&) noexcept = default;
@@ -133,19 +94,10 @@ namespace async
 
         awaitable_result& operator=(awaitable_result&& other) noexcept = default;
 
-        void operator()() const
-        {
-            if (m_exception)
-            {
-                std::rethrow_exception(m_exception);
-            }
-        }
+        void operator()() const {}
 
         constexpr void set_value() const noexcept {};
 
-        void set_exception(const std::exception_ptr& exception) noexcept { m_exception = exception; }
-
     private:
-        std::exception_ptr m_exception{};
     };
 }

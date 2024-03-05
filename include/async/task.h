@@ -4,7 +4,6 @@
 
 #include <cassert>
 #include <coroutine>
-#include <exception>
 #include <memory>
 #include "atomic_acq_rel.h"
 #include "awaitable_result.h"
@@ -27,32 +26,29 @@ namespace async::details
             return result;
         }
 
-        [[nodiscard]] void* running_state() const noexcept { return const_cast<task_state*>(this); };
+        [[nodiscard]] void* running_state() const { return const_cast<task_state*>(this); };
 
-        [[nodiscard]] void* ready_state() const noexcept
-        {
-            return const_cast<decltype(result)*>(std::addressof(result));
-        }
+        [[nodiscard]] void* ready_state() const { return const_cast<decltype(result)*>(std::addressof(result)); }
 
-        [[nodiscard]] constexpr void* done_state() const noexcept { return nullptr; };
+        [[nodiscard]] constexpr void* done_state() const { return nullptr; };
 
-        [[nodiscard]] bool is_running() const noexcept { return stateOrCompletion == running_state(); }
+        [[nodiscard]] bool is_running() const { return stateOrCompletion == running_state(); }
 
-        [[nodiscard]] bool is_ready() const noexcept { return stateOrCompletion == ready_state(); }
+        [[nodiscard]] bool is_ready() const { return stateOrCompletion == ready_state(); }
 
-        [[nodiscard]] bool is_done() const noexcept { return stateOrCompletion == done_state(); }
+        [[nodiscard]] bool is_done() const { return stateOrCompletion == done_state(); }
 
-        [[nodiscard]] bool is_completion(void* value) const noexcept
+        [[nodiscard]] bool is_completion(void* value) const
         {
             return value != running_state() && value != ready_state() && value != done_state();
         }
 
-        [[nodiscard]] std::coroutine_handle<> mark_ready() noexcept
+        [[nodiscard]] std::coroutine_handle<> mark_ready()
         {
             // mark_ready() must not be called if the task state has already moved to "done".
             assert(!is_done());
 
-            void* previousStateOrCompletion{ stateOrCompletion.exchange(ready_state()) };
+            void* previousStateOrCompletion = { stateOrCompletion.exchange(ready_state()) };
 
             if (is_completion(previousStateOrCompletion))
             {
@@ -74,11 +70,11 @@ namespace async
     template <typename T>
     struct task final
     {
-        explicit task(const std::shared_ptr<details::task_state<T>>& state) noexcept : m_state{ state } {}
+        explicit task(const std::shared_ptr<details::task_state<T>>& state) : m_state{ state } {}
 
         using promise_type = details::task_promise_type<T>;
 
-        [[nodiscard]] bool await_ready() const noexcept
+        [[nodiscard]] bool await_ready() const
         {
             void* currentStateOrCompletion{ m_state->stateOrCompletion };
 
@@ -106,7 +102,7 @@ namespace async
             {
                 if (currentStateOrCompletion != m_state->ready_state())
                 {
-                    throw std::runtime_error{ "task<T> may be co_awaited (or have await_suspend() used) only once." };
+                    assert(false && "task<T> may be co_awaited (or have await_suspend() used) only once.");
                 }
 
                 return false;
@@ -123,13 +119,11 @@ namespace async
             {
                 if (currentStateOrCompletion == m_state->done_state())
                 {
-                    throw std::runtime_error{ "task<T> may be co_awaited (or have await_resume() used) only once." };
+                    assert(false && "task<T> may be co_awaited (or have await_resume() used) only once.");
                 }
                 else
                 {
-                    throw std::runtime_error{
-                        "task<T>.await_resume() may not be called before await_ready() returns true."
-                    };
+                    assert(false && "task<T>.await_resume() may not be called before await_ready() returns true.");
                 }
             }
 
@@ -144,7 +138,7 @@ namespace async
 namespace async::details
 {
     template <typename T>
-    std::coroutine_handle<> get_completion(const std::weak_ptr<task_state<T>>& state) noexcept
+    std::coroutine_handle<> get_completion(const std::weak_ptr<task_state<T>>& state)
     {
         std::shared_ptr<task_state<T>> sharedState{ state.lock() };
 
@@ -162,18 +156,12 @@ namespace async::details
     }
 
     template <typename T>
-    void run_completion_if_exists(const std::weak_ptr<task_state<T>>& state) noexcept
+    void run_completion_if_exists(const std::weak_ptr<task_state<T>>& state)
     {
         const std::coroutine_handle<> possibleCompletion{ get_completion(state) };
 
         if (possibleCompletion)
         {
-            // This call is not technically noexcept; it could throw only if the coroutine has an unhandled exception
-            // and the call to its promise.unhandled_exception() itself throws. Because the C++20 standard requires that
-            // co_await of a final_suspend not be potentially throwing, and this function is called from task's
-            // final_suspend, we must treat this case as fatal. Note that once symmetric transfer is possible, it would
-            // avoid the need to run the completion here (we could return the coroutine_handle instead), avoiding
-            // running a potentially-throwing member within a final_suspend.
             possibleCompletion();
         }
     }
@@ -188,25 +176,17 @@ namespace async::details
             return task<T>{ std::move(state) };
         }
 
-        constexpr std::suspend_never initial_suspend() const noexcept { return {}; }
+        constexpr std::suspend_never initial_suspend() const { return {}; }
 
-        std::suspend_never final_suspend() const noexcept
+        std::suspend_never final_suspend() const
         {
             run_completion_if_exists(m_state);
             return {};
         }
 
-        void unhandled_exception() const noexcept
-        {
-            std::shared_ptr<task_state<T>> state{ m_state.lock() };
+        void unhandled_exception() const { assert(false && "not support exception"); }
 
-            if (state)
-            {
-                state->result.set_exception(std::current_exception());
-            }
-        }
-
-        void return_value(T value) const noexcept
+        void return_value(T value) const
         {
             std::shared_ptr<task_state<T>> state{ m_state.lock() };
 
@@ -230,7 +210,7 @@ namespace async::details
             return task<void>{ std::move(state) };
         }
 
-        constexpr std::suspend_never initial_suspend() const noexcept { return {}; }
+        constexpr std::suspend_never initial_suspend() const { return {}; }
 
         std::suspend_never final_suspend() const noexcept
         {
@@ -238,17 +218,9 @@ namespace async::details
             return {};
         }
 
-        void unhandled_exception() const noexcept
-        {
-            std::shared_ptr<task_state<void>> state{ m_state.lock() };
+        void unhandled_exception() const { assert(false && "not support exception"); }
 
-            if (state)
-            {
-                state->result = awaitable_result<void>{ std::current_exception() };
-            }
-        }
-
-        constexpr void return_void() const noexcept {}
+        constexpr void return_void() const {}
 
     private:
         std::weak_ptr<task_state<void>> m_state;
